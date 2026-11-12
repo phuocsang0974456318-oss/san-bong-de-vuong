@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, X, Search, Trash2, Clock } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+
+const STORAGE_KEY = 'local_booking_requests';
+
+// Dữ liệu mẫu ban đầu nếu localStorage chưa có gì
+const INITIAL_BOOKINGS = [
+  {
+    id: 'b1-sample',
+    customer_name: 'Nguyễn Văn Nam',
+    customer_phone: '0901234567',
+    court_type: '5',
+    booking_date: new Date().toISOString().split('T')[0],
+    time_slot: '17:00 - 18:30',
+    status: 'confirmed',
+    notes: 'Đã cọc tiền mặt'
+  }
+];
 
 export default function BookingPage() {
   const [bookings, setBookings] = useState<any[]>([]);
@@ -19,48 +34,34 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchBookings = useCallback(async () => {
+  const fetchBookings = useCallback(() => {
     setLoading(true);
-    if (!supabase) {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_BOOKINGS));
+        setBookings(INITIAL_BOOKINGS);
+      } else {
+        setBookings(JSON.parse(data));
+      }
+    } catch (err) {
+      console.error(err);
+      setBookings([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const { data, error } = await supabase
-      .from('booking_requests')
-      .select('*')
-      .order('booking_date', { ascending: false });
-
-    if (error) {
-      alert('Không tải được lịch đặt sân: ' + error.message);
-    } else if (data) {
-      setBookings(data);
-    }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
-    void fetchBookings();
+    fetchBookings();
   }, [fetchBookings]);
 
-  const handleAddBooking = async (e: React.FormEvent) => {
+  const handleAddBooking = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      if (!supabase) return;
-
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError) {
-        alert('Không xác định được tài khoản đăng nhập: ' + userError.message);
-        return;
-      }
-      if (!user) {
-        alert('Vui lòng đăng nhập lại trước khi đặt sân.');
-        return;
-      }
-
       const newBooking = {
-        user_id: user.id,
+        id: 'b_' + Date.now(),
         customer_name: customerName,
         customer_phone: phone,
         court_type: courtName.includes('(7 người)') ? '7' : '5',
@@ -70,17 +71,15 @@ export default function BookingPage() {
         notes: note || 'Không có ghi chú'
       };
 
-      const { error } = await supabase.from('booking_requests').insert([newBooking]);
+      const currentBookings = bookings;
+      const updated = [newBooking, ...currentBookings];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      setBookings(updated);
 
-      if (error) {
-        alert('Lỗi đặt sân: ' + error.message);
-      } else {
-        setIsModalOpen(false);
-        setCustomerName('');
-        setPhone('');
-        setNote('');
-        void fetchBookings();
-      }
+      setIsModalOpen(false);
+      setCustomerName('');
+      setPhone('');
+      setNote('');
     } catch (err: any) {
       alert('Lỗi: ' + (err.message || err));
     } finally {
@@ -88,18 +87,18 @@ export default function BookingPage() {
     }
   };
 
-  const handleDeleteBooking = async (id: string) => {
-    if (!supabase) return;
+  const handleDeleteBooking = (id: string) => {
     if (!window.confirm('Bạn có chắc chắn muốn hủy lịch đặt sân này không?')) return;
 
     setDeletingId(id);
-    const { error } = await supabase.from('booking_requests').delete().eq('id', id);
-    setDeletingId(null);
-
-    if (!error) {
-      setBookings(current => current.filter(b => b.id !== id));
-    } else {
-      alert('Không xóa được lịch: ' + error.message);
+    try {
+      const updated = bookings.filter(b => b.id !== id);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      setBookings(updated);
+    } catch (err: any) {
+      alert('Không xóa được lịch: ' + err.message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -136,7 +135,7 @@ export default function BookingPage() {
             <Plus size={16} /> Đặt sân mới
           </button>
           <button
-            onClick={() => void fetchBookings()}
+            onClick={() => fetchBookings()}
             style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '10px 16px', cursor: 'pointer', fontWeight: 500, fontSize: '13px' }}
           >
             <RefreshCw size={16} /> Làm mới
@@ -201,7 +200,7 @@ export default function BookingPage() {
                 filtered.map((b, i) => (
                   <tr key={b.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '12px 16px', fontWeight: 600, color: '#d4af37', fontFamily: 'monospace' }}>
-                      #{b.id.slice(0, 6).toUpperCase()}
+                      #{String(b.id).slice(-6).toUpperCase()}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
                       <div style={{ fontWeight: 600, color: '#0f172a' }}>{b.customer_name}</div>
@@ -232,7 +231,7 @@ export default function BookingPage() {
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                       <button
-                        onClick={() => void handleDeleteBooking(b.id)}
+                        onClick={() => handleDeleteBooking(b.id)}
                         disabled={deletingId === b.id}
                         style={{
                           display: 'inline-flex',
